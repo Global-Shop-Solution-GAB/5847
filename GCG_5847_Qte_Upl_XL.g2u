@@ -1,0 +1,441 @@
+Program.Sub.Preflight.Start
+Program.External.Include.Library("ORDUPL.lib")
+V.Global.sQuote.Declare(String, "")
+V.Global.sCstNo.Declare(String, "")
+V.Global.sCmmnt.Declare(String, "")
+Program.Sub.Preflight.End
+
+Program.Sub.Main.Start
+
+'This project was created for Peterson Tool Company.
+'We are uploading quote lines from an excel spreadsheet.
+'The excel spreadsheet is slightly weird, so we will have to read it in the oldway instead of trying to create a datatable.
+'The first line is just the word HEADER
+'The second line will be the title header,  (CUSTOMER ID, CONTACT NAME, REFERENCE, DELIVERY, COMMENTS)
+'the third line is the information used to fill the header
+'the fourth line is the word LINES
+'the fifth line is the header for the line information (LINE, LINE SUFFIX, QTY, DESCRIPTION, PART NUMBER, CUSTOMER PART, PRICE, UM, PL, LINE TEXT, INFO 1)
+'Every line after that is a line on the quote. 
+'This will fire from a custom menu item, itll promt the user to select a file, and read in the file expecting an excel spreadsheet with the information above
+'Created by FEQ on 1/23/2020
+
+F.Intrinsic.Control.Try
+V.Local.sError.Declare(String, "")
+
+F.Intrinsic.Control.CallSub(FileRequest)
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}",V.Ambient.ScriptPath,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.CallSub(Unload)
+F.Intrinsic.Control.EndTry
+Program.Sub.Main.End
+
+Program.Sub.FileRequest.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare(String, "")
+V.Local.sReqst.Declare(String, "")
+V.Local.sXlsxl.Declare(String, "")
+
+'Open File Browser and Save File as variable sFile
+F.Intrinsic.UI.ShowOpenFileDialog("","*.xlsx","C:\",V.Local.sReqst)
+
+F.Intrinsic.UI.InvokeWaitDialog("Parsing excel file.", "GENERATING QUOTE FROM EXCEL FILE")
+
+F.Intrinsic.Control.If(V.Local.sReqst.IsNotCancel, =, True)
+	'We need to check and make sure that the file they selected is an excel file.
+	F.Intrinsic.String.Split(V.Local.sReqst, ".", V.Local.sXlsxl)
+	F.Intrinsic.Control.If(V.Local.sXlsxl(V.Local.sXlsxl.UBound).UCase, <>, "XLSX")
+		F.Intrinsic.UI.Msgbox("Please select an Excel file", "FILE ERROR")
+		F.Intrinsic.Control.CallSub(Unload)
+	F.Intrinsic.Control.EndIf
+	
+	F.Intrinsic.Control.CallSub(ExcelProcessing, "FILELC", V.Local.sReqst)
+	
+	F.Intrinsic.Control.If(V.DataTable.ORDUPLLines.RowCount, >, 0)
+		
+		F.Intrinsic.Control.CallSub(ORDUPLCreateFile)
+		
+		F.Intrinsic.UI.InvokeWaitDialog("Generating quote in the system")
+				
+		F.Intrinsic.Control.CallSub(ORDUPLSync)
+		
+		F.Intrinsic.Control.CallSub(QuoteVerification, "FILELC", V.Local.sReqst)
+		
+	F.Intrinsic.Control.Else
+		
+		F.Intrinsic.UI.Msgbox("Lines were not processed successfully. Check file format")
+		F.Intrinsic.Control.CallSub(Unload)
+		
+	F.Intrinsic.Control.EndIf
+	
+F.Intrinsic.Control.Else
+	'For testing purposes only!!!!
+	
+'	F.Global.General.CallWrapperSync(50,"ORDUPL")
+	
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}",V.Ambient.ScriptPath,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.CallSub(Unload)
+F.Intrinsic.Control.EndTry
+Program.Sub.FileRequest.End
+
+Program.Sub.ExcelProcessing.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare(String, "")
+V.Local.sXLDat.Declare(String, "")
+V.Local.sCntnt.Declare(STring, "")
+
+F.Automation.MSExcel.ReadSpreadsheet(V.Args.FILELC, V.Local.sXLDat)
+
+F.Intrinsic.String.Split(V.Local.sXLDat, "&!&", V.Local.sXLDat)
+F.Intrinsic.Control.If(V.Local.sXLDat(0).Trim, <>, "")
+	F.Intrinsic.String.Split(V.Local.sXLDat(0).Trim, "$!$", V.Local.sCntnt)
+	F.Intrinsic.Control.If(V.Local.sCntnt.UBound, <, 6)
+		'error message and exit
+		F.Intrinsic.UI.Msgbox("File format is different from expected.", "ERROR READING FILE")
+		F.Intrinsic.Control.CallSub(Unload)
+		
+	F.Intrinsic.Control.EndIf
+	
+	'So as mentioned before, The information is kinda whack, but we should see the content for the header in the 3rd index, and the lines beginning in the 6th
+	F.Intrinsic.Control.CallSub(HeaderInfo, "FILEHD", V.Local.sCntnt(2))
+	
+	'Random lines no longer needed
+	F.Intrinsic.Variable.PopArray(V.Local.sCntnt, V.Local.sCntnt)
+	F.Intrinsic.Variable.PopArray(V.Local.sCntnt, V.Local.sCntnt)
+	F.Intrinsic.Variable.PopArray(V.Local.sCntnt, V.Local.sCntnt)
+	F.Intrinsic.Variable.PopArray(V.Local.sCntnt, V.Local.sCntnt)
+	F.Intrinsic.Variable.PopArray(V.Local.sCntnt, V.Local.sCntnt)
+	
+	F.Intrinsic.String.Join(V.Local.sCntnt, "@!@", V.Local.sCntnt)
+	
+	F.Intrinsic.Control.CallSub(LinesInfo, "FILELN", V.Local.sCntnt)
+	
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}",V.Ambient.ScriptPath,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.CallSub(Unload)
+F.Intrinsic.Control.EndTry
+Program.Sub.ExcelProcessing.End
+
+Program.Sub.Unload.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare(String, "")
+
+F.Intrinsic.UI.CloseWaitDialog
+F.Intrinsic.Control.End
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}",V.Ambient.ScriptPath,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.End
+F.Intrinsic.Control.EndTry
+Program.Sub.Unload.End
+
+Program.Sub.HeaderInfo.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare(String, "")
+V.Local.sHeadr.Declare(String, "")
+V.Local.sCstNo.Declare(String, "")
+V.Local.sOrdDt.Declare(String, "")
+V.Local.sCntct.Declare(String, "")
+V.Local.sRefff.Declare(String, "")
+V.Local.sDlvry.Declare(String, "")
+V.Local.sCmmnt.Declare(String, "")
+V.Local.sQuote.Declare(String, "")
+V.Local.sQuery.Declare(String, "")
+V.Local.iQuote.Declare(Long, 0)
+
+F.Global.General.ReadOption(401312, 3, "0", V.Local.iQuote)
+
+F.Intrinsic.String.LPad(V.Local.iQuote, "0", 7, V.Local.sQuote)
+
+F.ODBC.Connection!conx.OpenCompanyConnection
+
+F.Intrinsic.String.Build("Select LTRIM(RTRIM(QUOTE_NO)), QUOTE_NO from V_QUOTE_HEADER where QUOTE_NO >= '{0}' order by QUOTE_NO", V.Local.sQuote, V.Local.sQuery)
+F.Data.Dictionary.CreateFromSQL("dtQuote", "conx", V.Local.sQuery)
+F.Data.Dictionary.SetDefaultReturn("dtQuote", -1)
+
+F.Intrinsic.Control.DoUntil(V.Dictionary.dtQuote![V.Local.sQuote], =, -1)
+	F.Intrinsic.Math.Add(V.Local.iQuote, 1, V.Local.iQuote)
+	F.Intrinsic.String.LPad(V.Local.iQuote, "0", 7, V.Local.sQuote)
+	
+F.Intrinsic.Control.Loop
+
+F.ODBC.Connection!conx.Close
+
+V.Global.sQuote.Set(V.Local.sQuote)
+V.Local.sOrdDt.Set(V.Ambient.Date.FormatYYYYMMDD)
+
+'Values coming in are CUSTOMERID*!*CONTACTNAME*!*REFERENCE*!*DELIVERY*!*COMMENTS
+F.Intrinsic.String.Split(V.Args.FILEHD, "*!*", V.Local.sHeadr)
+V.Local.sHeadr.RedimPreserve(0, 4)
+
+'CustomerNo
+F.Intrinsic.String.RPad(V.Local.sHeadr(0).Trim, " ", 6, V.Local.sCstNo)
+F.Intrinsic.String.Left(V.Local.sCstNo, 6, V.Local.sCstNo)
+V.Global.sCstNo.Set(V.Local.sCstNo)
+
+'ContactName
+F.Intrinsic.String.RPad(V.Local.sHeadr(1).Trim, " ", 30, V.Local.sCntct)
+F.Intrinsic.String.Left(V.Local.sCntct, 30, V.Local.sCntct)
+
+'CustomerPO
+F.Intrinsic.String.RPad(V.Local.sHeadr(2).Trim, " ", 15, V.Local.sRefff)
+F.Intrinsic.String.Left(V.Local.sRefff, 15, V.Local.sRefff)
+
+'MarkShipment
+F.Intrinsic.String.RPad(V.Local.sHeadr(3).Trim, " ", 30, V.Local.sDlvry)
+F.Intrinsic.String.Left(V.Local.sDlvry, 30, V.Local.sDlvry)
+
+'ExtraTextLine1
+F.Intrinsic.String.RPad(V.Local.sHeadr(4).Trim, " ", 30, V.Local.sCmmnt)
+F.Intrinsic.String.Left(V.Local.sCmmnt, 30, V.Local.sCmmnt)
+
+'CUSTOEMR ID =   CustomerNo; CONTACT NAME =  ContactName 'REFERENCE = CustomerPO; 'DELIVERY = MarkShipment; COMMENTS = ExtraTextLine1, TextPosition = H, ;
+'F.Data.DataTable.AddRow("ORDUPL", "Transaction", "Q", "CustomerNo", V.Local.sCstNo, "OrderNumber", V.Local.sQuote, "OrderDate", V.Local.sOrdDt, "CustomerPO", V.Local.sRefff, "ContactName", V.Local.sCntct, "MarkShipment", V.Local.sDlvry)
+'F.Data.DataTable.AddRow("ORDUPL", "Transaction", "Q", "CustomerNo", V.Local.sCstNo, "OrderDate", V.Local.sOrdDt, "CustomerPO", V.Local.sRefff, "ContactName", V.Local.sCntct, "MarkShipment", V.Local.sDlvry, "OverrideAutoNumbering", "1")
+F.Data.DataTable.AddRow("ORDUPL", "Transaction", "Q", "CustomerNo", V.Local.sCstNo, "OrderDate", V.Local.sOrdDt, "CustomerPO", V.Local.sRefff, "ContactName", V.Local.sCntct, "MarkShipment", V.Local.sDlvry, "OverrideAutoNumbering", "1", "OrderNumber", V.Local.sQuote)
+
+F.Data.DataTable.AddRow("ORDUPLExtra", "ExtraTextLine1", V.Local.sCmmnt, "TextPosition", "F", "ApplyTextToQuote" , "Y")
+
+V.Global.sCmmnt.Set(V.Local.sHeadr(4).Trim)
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}",V.Ambient.ScriptPath,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.CallSub(Unload)
+F.Intrinsic.Control.EndTry
+Program.Sub.HeaderInfo.End
+
+Program.Sub.LinesInfo.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare(String, "")
+V.Local.sTitle.Declare(String, "")
+V.Local.sTypes.Declare(String, "")
+V.Local.sCntnt.Declare(String, "")
+V.Local.sLnNum.Declare(String, "")
+V.Local.sLnSeq.Declare(String, "")
+V.Local.sQuant.Declare(String, "")
+V.Local.sPartN.Declare(String, "")
+V.Local.sPartR.Declare(String, "")
+V.Local.sPrice.Declare(String, "")
+V.Local.sDescr.Declare(String, "")
+V.Local.sCustP.Declare(String, "")
+V.Local.sUMeas.Declare(String, "")
+V.Local.sProdL.Declare(String, "")
+V.Local.sLnTxt.Declare(String, "")
+V.Local.sInfo1.Declare(String, "")
+V.Local.iCount.Declare(Long, 0)
+
+'The line information is going to be sent as a string with values of LINE*!*LINESUFFIX*!*QTY*!*DESCRIPTION*!*PARTNUMBER*!*CUSTOMERPART*!*PRICE*!*UM*!*PL*!*LINETEXT*!*INFO1
+'With rows delimited by @!@
+V.Local.sTitle.Set("LINE*!*LINESUFFIX*!*QTY*!*DESCRIPTION*!*PARTNUMBER*!*CUSTOMERPART*!*PRICE*!*UM*!*PL*!*LINETEXT*!*INFO1")
+V.Local.sTypes.Set("String*!*String*!*String*!*String*!*String*!*String*!*String*!*String*!*String*!*String*!*String")
+
+F.Data.DataTable.CreateFromString("dtInitial", V.Args.FILELN, V.Local.sTitle, V.Local.sTypes, "*!*", "@!@", True)
+F.Data.DataView.Create("dtInitial", "dvInView", 22, "[LINE] <> ''", "")
+F.Data.DataView.ToDataTable("dtInitial", "dvInView", "dtQtLines", True)
+
+F.Intrinsic.String.Build("Processing Quote lines. {0} lines were found in file.", V.DataTable.dtQTLines.RowCount, V.Local.sTitle)
+F.Intrinsic.UI.ChangeWaitStatus(V.Local.sTitle)
+
+F.Intrinsic.Control.For(V.Local.iCount, 0, V.DataTable.dtQTLines.RowCount--, 1)
+	F.Intrinsic.Control.If(V.DataTable.dtQTLines(V.Local.iCount).PARTNUMBER!FieldValTrim, <>, "")
+		
+		'The line is split in between two columns. We want to put together Line and Line Suffix together
+		F.Intrinsic.String.LPad(V.DataTable.dtQTLines(V.Local.iCount).LINE!FieldValTrim, "0", 3, V.Local.sLnNum)
+		
+		F.Intrinsic.String.LPad(V.DataTable.dtQTLines(V.Local.iCount).LINESUFFIX!FieldValTrim, "0", 1, V.Local.sLnSeq)
+'		F.Intrinsic.String.Build("{0}{1}", V.Local.sLnNum, V.Local.sLnSeq, V.Local.sLnNum)
+		
+		'Line Quantity has implied 4 decimals
+		F.Intrinsic.Math.Mult(V.DataTable.dtQTLines(V.Local.iCount).QTY!FieldValTrim, 10000, V.Local.sQuant)
+		F.Intrinsic.String.LPad(V.Local.sQuant, "0", 13, V.Local.sQuant)
+		
+		F.Intrinsic.String.RPad(V.DataTable.dtQTLines(V.Local.iCount).DESCRIPTION!FieldValTrim, " ", 30, V.Local.sDescr)
+		F.Intrinsic.String.Left(V.Local.sDescr, 30, V.Local.sDescr)
+		
+		'We need to split the part into part/rev
+		F.Intrinsic.String.RPad(V.DataTable.dtQTLines(V.Local.iCount).PARTNUMBER!FieldValTrim, " ", 20, V.Local.sPartN)
+		F.Intrinsic.String.Right(V.Local.sPartN, 3, V.Local.sPartR)
+		F.Intrinsic.String.Left(V.Local.sPartN, 17, V.Local.sPartN)
+		
+		'Price need to have implied 6 decimal places
+		F.Intrinsic.Math.Mult(V.DataTable.dtQTLines(V.Local.iCount).PRICE!FieldValTrim, 1000000, V.Local.sPrice)
+		F.Intrinsic.String.LPad(V.Local.sPrice, "0", 16, V.Local.sPrice)
+		
+		'For the unit of measure, the customer wants us to get it from the Inventory Master if the value is blank in the 
+		'UM
+		F.Intrinsic.String.RPad(V.DataTable.dtQTLines(V.Local.iCount).UM!FieldValTrim, " ", 2, V.Local.sUMeas)
+		F.Intrinsic.String.Left(V.Local.sUMeas, 2, V.Local.sUMeas)
+		
+		'PL
+		F.Intrinsic.String.RPad(V.DataTable.dtQTLines(V.Local.iCount).PL!FieldValTrim, " ", 2, V.Local.sProdL)
+		F.Intrinsic.String.Left(V.Local.sProdL, 2, V.Local.sProdL)
+				
+		F.Data.DataTable.AddRow("ORDUPLLines", "LineNumber", V.Local.sLnNum, "Filler1", V.Local.sLnSeq, "QtyOrdered", V.Local.sQuant, "PartNumber", V.Local.sPartN, "PartRev", V.Local.sPartR, "PartLoc", "  ", "QuotedPrice", V.Local.sPrice, "PartDesc", V.Local.sDescr, "UM", V.Local.sUMeas, "PL", V.Local.sProdL)
+		
+	F.Intrinsic.Control.EndIf
+	
+F.Intrinsic.Control.Next(V.Local.iCount)
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}",V.Ambient.ScriptPath,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.CallSub(Unload)
+F.Intrinsic.Control.EndTry
+Program.Sub.LinesInfo.End
+
+Program.Sub.QuoteVerification.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare(String, "")
+V.Local.sFileD.Declare(String, "")
+V.Local.sCntnt.Declare(String, "")
+V.Local.sCurrr.Declare(String, "")
+V.Local.sQuote.Declare(String, "")
+V.Local.sMssge.Declare(String, "")
+V.Local.sTempt.Declare(String, "")
+V.Local.bFChck.Declare(Boolean, False)
+V.Local.iLastL.Declare(Long, 0)
+
+'We go into the error log to find the last line and verify that the quote was created.
+F.Intrinsic.String.Build("{0}\ORDUP{1}.ERR", V.Caller.FilesDir, V.Caller.CompanyCode, V.Local.sFileD)
+F.Intrinsic.File.Exists(V.Local.sFileD, V.Local.bFChck)
+F.Intrinsic.Control.If(V.Local.bFChck)
+	F.Intrinsic.File.File2String(V.Local.sFileD, V.Local.sCntnt)
+	F.Intrinsic.String.Split(V.Local.sCntnt, V.Ambient.NewLine, V.Local.sCntnt)
+	F.Intrinsic.Math.Sub(V.Local.sCntnt.UBound, 1, V.Local.iLastL)
+	F.Intrinsic.String.Split(V.Local.sCntnt(V.Local.iLastL), "ERROR:", V.Local.sCurrr)
+	F.Intrinsic.Control.If(V.Local.sCurrr.UBound, =, 0)
+		F.Intrinsic.String.Split(V.Local.sCurrr.UCase, "ORDER: ", V.Local.sCurrr)
+		F.Intrinsic.String.Split(V.Local.sCurrr(1), ".", V.Local.sQuote)
+				
+		F.Intrinsic.Control.CallSub(PostQuoteExtraAdds)
+		
+		F.Intrinsic.UI.CloseWaitDialog
+		F.Intrinsic.String.Build("Quote '{0}' has been created successfully", V.Global.sQuote, V.Local.sMssge)
+		F.Intrinsic.UI.Msgbox(V.Local.sMssge, "SUCCESS")
+		
+	F.Intrinsic.Control.Else
+		'We have an error and will need to report it
+		F.Intrinsic.String.Replace(V.Local.sCurrr(1).UCASE, "PGM=", "^^&^^PROGRAM: ", V.Local.sMssge)
+		F.Intrinsic.String.Build("ORDUP1{0}", V.Ambient.NewLine, V.Local.sTempt)
+		F.Intrinsic.String.Replace(V.Local.sMssge, "ORDUP1", V.Local.sTempt, V.Local.sMssge)
+		F.Intrinsic.String.Build("ORDUP2{0}", V.Ambient.NewLine, V.Local.sTempt)
+		F.Intrinsic.String.Replace(V.Local.sMssge, "ORDUP3", V.Local.sTempt, V.Local.sMssge)
+		F.Intrinsic.String.Build("ORDUP3{0}", V.Ambient.NewLine, V.Local.sTempt)
+		F.Intrinsic.String.Replace(V.Local.sMssge, "ORDUP3", V.Local.sTempt, V.Local.sMssge)		
+		
+		F.Intrinsic.String.Split(V.Local.sMssge, "^^&^^", V.Local.sMssge)
+		F.Intrinsic.String.Split(V.Local.sMssge(1), "|", V.Local.sMssge)
+		
+		F.Intrinsic.UI.Msgbox(V.Local.sMssge(0), "ERROR CREATING QUOTE")
+		F.Intrinsic.Control.CallSub(Unload)
+		
+	F.Intrinsic.Control.EndIf
+F.Intrinsic.Control.Else
+	'File was not found, print error in regards to that
+	F.Intrinsic.UI.Msgbox("Web Importer log file was not found. Quote creation cannot be verified!", "WEB IMPORTER LOG FILE MISSING")
+	F.Intrinsic.Control.CallSub(Unload)
+	
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}",V.Ambient.ScriptPath,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.CallSub(Unload)
+F.Intrinsic.Control.EndTry
+Program.Sub.QuoteVerification.End
+
+Program.Sub.PostQuoteExtraAdds.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare(String, "")
+V.Local.sQuery.Declare(String, "")
+V.Local.sRecNo.Declare(String, "")
+V.Local.sLnNum.Declare(String, "")
+V.Local.sPrtNo.Declare(String, "")
+V.Local.sCstPN.Declare(String, "")
+V.Local.sCstTx.Declare(String, "")
+V.Local.iCount.Declare(Long, 0)
+
+F.ODBC.Connection!conx.OpenCompanyConnection
+
+F.Intrinsic.String.Build("Select RTRIM(LTRIM(PART)), CUSTOMER_PART from INV_CROSS_REF where CUSTOMER = '{0}'", V.Global.sCstNo, V.Local.sQuery)
+F.Data.Dictionary.CreateFromSQL("dicCustPart", "conx", V.Local.sQuery)
+F.Data.Dictionary.SetDefaultReturn("dicCustPart", "")
+
+F.Intrinsic.String.Build("Select QUOTE_NO, TYPE, ON_QUOTE, TEXT from QUOTE_HF_TEXT where QUOTE_NO = '{0}' and ON_QUOTE = '1'", V.Global.sQuote, V.Local.sQuery)
+F.ODBC.Connection!conx.OpenLocalRecordsetRW("rstComments", V.Local.sQuery)
+F.Intrinsic.Control.If(V.ODBC.conx!rstComments.EOF, =, True)
+	F.ODBC.conx!rstComments.AddNew
+	F.ODBC.conx!rstComments.Set!QUOTE_NO(V.Global.sQuote)
+	F.ODBC.conx!rstComments.Set!ON_QUOTE(1)
+	F.ODBC.conx!rstComments.Set!TYPE(1)
+F.Intrinsic.Control.EndIf
+F.ODBC.conx!rstComments.Set!TEXT(V.Global.sCmmnt)
+F.ODBC.conx!rstComments.Update
+F.ODBC.conx!rstComments.Close
+
+'Now we need to loop through the table and add teh rest of the info that was unable to be created from the ORDUPL
+F.Intrinsic.Control.For(V.Local.iCount, 0, V.DataTable.dtQTLines.RowCount--, 1)
+	'For the Info_1 and Customer Part, we just insert the value in teh table
+	F.Intrinsic.String.LPad(V.DataTable.dtQTLines(V.Local.iCount).LINE!FieldValTrim, "0", 3, V.Local.sLnNum)
+	F.Intrinsic.String.LPad(V.DataTable.dtQTLines(V.Local.iCount).LINESUFFIX!FieldValTrim, "0", 1, V.Local.sRecNo)
+	F.Intrinsic.String.Build("{0}{1}", V.Local.sLnNum, V.Local.sRecNo, V.Local.sRecNo)
+	
+	'We need to verify that the customer part number is in the . If it does not, we need to pull it from the system.
+	F.Intrinsic.Control.If(V.DataTable.dtQTLines(V.Local.iCount).CUSTOMERPART!FieldValTrim, = , "")
+		V.Local.sPrtNo.Set(V.DataTable.dtQTLines(V.Local.iCount).PARTNUMBER!FieldValTrim)
+		V.Local.sCstPN.Set(V.Dictionary.dicCustPart![V.Local.sPrtNo.Trim])
+	F.Intrinsic.Control.Else
+		V.Local.sCstPN.Set(V.DataTable.dtQTLines(V.Local.iCount).CUSTOMERPART!FieldValTrim)
+	F.Intrinsic.Control.EndIf
+	
+
+	F.Intrinsic.String.Build("Update QUOTE_LINES set INFO_1 = '{0}', CUSTOMER_PART = '{1}' where QUOTE_NO = '{2}' and RECORD_NO = '{3}'", V.DataTable.dtQTLines(V.Local.iCount).INFO1!FieldValTrim, V.Local.sCstPN.Trim, V.Global.sQuote, V.Local.sRecNo, V.Local.sQuery)
+	F.ODBC.Connection!conx.Execute(V.Local.sQuery)
+	
+	'For the Line Text, we need to add an entry in the QUOTE_LN_TEXT if it doesnt exist, so we will have to do it through a recordset
+	F.Intrinsic.String.Build("Select QUOTE_NUMBER, QUOTE_LINE, QUOTE_TYPE, TEXT from QUOTE_LN_TEXT where QUOTE_NUMBER = '{0}' and QUOTE_LINE = '{1}' and QUOTE_TYPE = '9999'", V.Global.sQuote, V.Local.sRecNo, V.Local.sQuery)
+	F.ODBC.Connection!conx.OpenLocalRecordsetRW("rstQTText", V.Local.sQuery)
+	F.Intrinsic.Control.If(V.ODBC.conx!rstQTText.EOF, =, True)
+		F.ODBC.conx!rstQTText.AddNew
+		F.ODBC.conx!rstQTText.Set!QUOTE_NUMBER(V.Global.sQuote)
+		F.ODBC.conx!rstQTText.Set!QUOTE_LINE(V.Local.sRecNo)
+		F.ODBC.conx!rstQTText.Set!QUOTE_TYPE("9999")
+	F.Intrinsic.Control.EndIf
+	F.ODBC.conx!rstQTText.Set!TEXT(V.DataTable.dtQTLines(V.Local.iCount).LINETEXT!FieldValTrim)
+	F.ODBC.conx!rstQTText.Update
+	F.ODBC.conx!rstQTText.Close
+	
+	'For the Customer Part stuff, we need to add an entry in the QUOTE_LN_TEXT if it doesnt exist, so we will have to do it through a recordset
+	F.Intrinsic.String.Build("Select QUOTE_NUMBER, QUOTE_LINE, QUOTE_TYPE, TEXT from QUOTE_LN_TEXT where QUOTE_NUMBER = '{0}' and QUOTE_LINE = '{1}' and QUOTE_TYPE = '2'", V.Global.sQuote, V.Local.sRecNo, V.Local.sQuery)
+	F.ODBC.Connection!conx.OpenLocalRecordsetRW("rstQTText", V.Local.sQuery)
+	F.Intrinsic.Control.If(V.ODBC.conx!rstQTText.EOF, =, True)
+		F.ODBC.conx!rstQTText.AddNew
+		F.ODBC.conx!rstQTText.Set!QUOTE_NUMBER(V.Global.sQuote)
+		F.ODBC.conx!rstQTText.Set!QUOTE_LINE(V.Local.sRecNo)
+		F.ODBC.conx!rstQTText.Set!QUOTE_TYPE("2")
+	F.Intrinsic.Control.EndIf
+	F.Intrinsic.String.Build("Cust Part {0}", V.Local.sCstPN, V.Local.sCstTx)
+	F.ODBC.conx!rstQTText.Set!TEXT(V.Local.sCstTx)
+	F.ODBC.conx!rstQTText.Update
+	F.ODBC.conx!rstQTText.Close
+	
+F.Intrinsic.Control.Next(V.Local.iCount)
+
+F.ODBC.Connection!conx.Close
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}",V.Ambient.ScriptPath,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.CallSub(Unload)
+F.Intrinsic.Control.EndTry
+Program.Sub.PostQuoteExtraAdds.End
